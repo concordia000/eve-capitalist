@@ -52,6 +52,12 @@ loadExisting = False
 
 # Filter items that only sold for 1 unit
 removeSmallVolume = True
+
+# Limit search to a certain market group
+groupSearch = False
+# Items in the same market group we want to search
+marketGroupSearchItems = ['Machariel', 'Marshal', 'Vedmak', 'Hydrogen Isotopes']
+marketGroupIds = []
 #########################################################################################
 # Get region ID
 payload = {'categories': ['region'], 'search': regionName, 'strict': 'true'}
@@ -65,6 +71,20 @@ queryDict = dict()
 infoDict = dict()
 
 # Async functions for gathering data from ESI
+async def getMarketGroupInfo(ids, session):
+    typeList = []
+    for id in ids:
+        endpoint = 'groups/' + str(id)
+        url = MarketUrl + endpoint
+        async with session.get(url) as r:
+            try:
+                data = await r.json()
+                typeList += data['types']
+            except:
+                print(
+                    'Error for market group %i: data unavailable.' % id)
+    return typeList
+
 async def getPriceHistory(historyDict, typeIds, regionId, session):
     endpoint = str(regionId)+'/history/'
     url = MarketUrl + endpoint
@@ -89,7 +109,8 @@ async def getInfo(infoDict, typeIds, session):
                 data = await r.json()
                 name = data['name']
                 volume = data['packaged_volume']
-                infoDict[typeId] = {'name': name, 'volume': volume}
+                infoDict[typeId] = {'name': name, 'volume': volume,
+                                    'market_group_id': data['market_group_id']}
             except:
                 print('Error for type %i: failed to fetch information.' % typeId)
 
@@ -121,6 +142,27 @@ if not(loadExisting):
     # data = r.json()
     # relevantTypes += data
 
+    # Get the item IDs to limit the search to market group
+    if groupSearch:
+        print('Getting item and market group data for %s...' %
+              ', '.join(marketGroupSearchItems))
+        r = requests.post(UniverseUrl+'ids/',
+                          json=marketGroupSearchItems).json()
+        data = r['inventory_types']
+        # Get item attributes and item group
+        marketGroupItemIds = []
+        marketItemDict = dict()
+        for entry in data:
+            marketGroupItemIds.append(entry['id'])
+        loop.run_until_complete(
+            getInfo(marketItemDict, marketGroupItemIds, session))
+        for v in marketItemDict.values():
+            marketGroupIds.append(v['market_group_id'])
+        # Get information for those market gruops
+        typeList = loop.run_until_complete(getMarketGroupInfo(marketGroupIds, session))
+        # Select common elements from two lists
+        relevantTypes = list(set(typeList)&set(relevantTypes))
+
     print('Getting local prices for %i types...' % len(relevantTypes))
     loop.run_until_complete(getPriceHistory(
         queryDict, relevantTypes, regionId, session))
@@ -145,6 +187,26 @@ else:
         refDict = json.load(fp)
     print('Databases sucessfully loaded')
     relevantTypes = list(queryDict)  # Some types may not be available
+    # Get the item IDs to limit the search to market group
+    if groupSearch:
+        print('Getting item data for %s...' %
+              ', '.join(marketGroupSearchItems))
+        r = requests.post(UniverseUrl+'ids/',
+                          json=marketGroupSearchItems).json()
+        data = r['inventory_types']
+        # Get item attributes and item group
+        marketGroupItemIds = []
+        marketItemDict = dict()
+        for entry in data:
+            marketGroupItemIds += entry['id']
+        loop.run_until_complete(
+            getInfo(marketItemDict, marketGroupItemIds, session))
+        for v in marketItemDict.values():
+            marketGroupIds.append(v['market_group_id'])
+        # Get information for those market gruops
+        typeList = loop.run_until_complete(getMarketGroupInfo(marketGroupIds, session))
+        # Select common elements from two lists
+        relevantTypes = list(set(typeList)&set(relevantTypes))
 
 # Compare price percentages
 print('Calculating prices differences...')
@@ -162,7 +224,7 @@ for typeId in relevantTypes:
             if (queryDict[typeId]['volume'] == 1) and removeSmallVolume:
                 del queryDict[typeId]
     except:
-        del queryDict[typeId] # Reference prices not available
+        del queryDict[typeId]  # Reference prices not available
 
 
 # Get info for those types
@@ -204,12 +266,17 @@ for entry in deltaList:
 profitsList = sorted(profitsList, key=lambda element: element[5], reverse=True)
 
 # Print and output the results
-print('Writing Results to EVE Capitalist Import Report - %s.csv...' % regionName )
-with open('EVE Capitalist Import Report - %s.csv' % regionName, 'w', newline='') as f:
-    writer = csv.writer(f)
-    writer.writerow(['Type', 'Average Price', 'Price Difference (%)', 'Price Difference Per Unit',
-                     'Trade Volume', 'Profit',  'Volume Per Unit'])
-    writer.writerows(profitsList)
+if profitsList == []:
+    print('No items eligible found. Exiting...')
+else:
+    timeStamp = time.strftime("%m-%d %H%M", time.localtime())
+    print('Writing Results to EVE Capitalist Import Report - %s %s.csv...' %
+        (regionName, timeStamp))
+    with open('EVE Capitalist Import Report - %s %s.csv' % (regionName, timeStamp), 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['Type', 'Average Price', 'Price Difference (%)', 'Price Difference Per Unit',
+                        'Trade Volume', 'Profit',  'Volume Per Unit'])
+        writer.writerows(profitsList)
 
 # Close sessions
 conn.close()
@@ -217,4 +284,4 @@ loop.close()
 
 # Clean up and report
 elapsedTime = time.time()-startTime
-print('Computation finished in %f seconds' % elapsedTime)
+print('Computation finished in %.2f seconds' % elapsedTime)

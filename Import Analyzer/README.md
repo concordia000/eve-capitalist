@@ -25,6 +25,9 @@ pip install requests aiohttp
 
 `removeSmallVolume` - Filter items that only traded for 1 unit last time an exchange was recorded. Default: True
 
+`groupSearch` - Whether to limit the query to selected market groups. Default: False
+
+`marketGroupSearchItems` - A list containing items in market groups you would like to select. Eg to select "Pirate Faction Battleships" put in "Machariel", to select "Black Ops Battlaships" put in "Widow", etc.
 
 ## Usage
 Use text editor to change parameters in `eve-capitalist-import.py` to suit your need, then run it with Python:
